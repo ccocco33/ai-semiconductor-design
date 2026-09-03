@@ -1,40 +1,64 @@
 python은 변수 타입,선언 x
 
+
 [특수기능문자]
 특수 기능을 하는 (\n,\,\t 등)문자들을 일반 문자로취급하려면 \를 한개 더 작성한다.
 (ex) print('C:\\temp') => C:\temp
 
+
 문자열 앞에 r-prefix를 쓰면 그건 다 문자열로 취급 
 (ex) print(r'C:\temp') => C:\temp
 
+
 [type]
+
 print(type(int)) => <class 'type'>
 print(type(10)) => <class 'int'>
 
 [bool]
+
 print(bool(1.5)) => True
+
 print(bool(2)) => True
+
 print(bool(0)) => False
 
+
 print(bool("aa")) => True
+
 print(bool(" ")) => True
+
 print(bool("")) => false
 
+
+
 [format 매서드]
+
 a = '{0} + {0} = {2}'.format(2,3,2+2) 
+
 {뒤에 번호 대입}
+
 t = 'a = {a}, b = {b}',format(a=10,b=20)
+
 {뒤에 변수 대입}
 
+
 [f-perfix]
+
 -> f'----'문자열로 {대상:형식}으로 인쇄형식 지정
 
+
 name = 'young'
+
 age = 10
 
+
 s = f'{name}, {age+1}'
+
 print (s) => young, 11
+
 print(f'{age:>5} - {age:0>5}') =>   10 - 00010
+
 
 # 1과. Python 기본 문법 정리
 
