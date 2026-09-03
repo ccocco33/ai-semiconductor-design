@@ -173,19 +173,19 @@
 # [4-12] list의 copy 메서드와 copy 모듈
 ############################################################
 
-# import copy
-# 
-# l1 = [[1,2],[3,4]]
-# l2 = l1.copy()
-# l3 = copy.copy(l1)
-# l4 = copy.deepcopy(l1)
-# 
-# l1[0][0] = 10
-# 
-# print(id(l1[0]),l1,sep='\n')
-# print(id(l2[0]),l2,sep='\n')
-# print(id(l3[0]),l3,sep='\n')
-# print(id(l4[0]),l4,sep='\n')
+import copy
+
+l1 = [[1,2],[3,4]]
+l2 = l1.copy()
+l3 = copy.copy(l1)
+l4 = copy.deepcopy(l1)
+
+l1[0][0] = 10
+
+print(id(l1[0]),l1,sep='\n')
+print(id(l2[0]),l2,sep='\n')
+print(id(l3[0]),l3,sep='\n')
+print(id(l4[0]),l4,sep='\n')
 
 ############################################################
 # [4-13] in, not in 연산
