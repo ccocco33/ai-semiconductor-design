@@ -86,11 +86,12 @@
 ############################################################
 
 # def string_repeat(s, n) :
-# 
+
 #     # 코드 작성
-# 
+#     x = s*n
+
 #     return x
-# 
+
 # y = string_repeat('kim', 2)
 # print(y)
 # print(string_repeat('hello', 3))

@@ -3,12 +3,12 @@
 ############################################################
 
 # a = 10
-# 
+
 # def f1() : print(1)
 # def f2() : print(a + 1)
 # def f3(x, y) : print(max(x, y))
 # def f4(x, y) : return x + y
-# 
+
 # f1()
 # f2()
 # f3(5, 10)
@@ -20,10 +20,10 @@
 
 # a = 10
 # l1 = lambda : print(1)
-# l2 = 
-# l3 = 
-# l4 = 
-# 
+# l2 = lambda : print(a+1)
+# l3 = lambda x,y :print(max(x,y))
+# l4 = lambda x,y : x+y
+
 # l1()
 # l2()
 # l3(5, 10)
@@ -98,29 +98,36 @@
 # #  def comp1(x) : return x[0]
 # #  def comp2(x) : return x[1]
 # #  def comp3(x) : return x[1], x[2]
-#     
+    
 # t = (('banana', 500, 'yellow'), ('apple', 600, 'red'), ('kiwi', 500, 'brown'))
-# 
-# print( min(t, key =                              ) ) # key = comp1 기능 
-# print( min(t, key =                              ) ) # key = comp2 기능
-# print( min(t, key =                              ) ) # key = comp3 기능
+
+# print( min(t, key = lambda x: x[0]                             ) ) # key = comp1 기능 
+# print( min(t, key = lambda x: x[1]                             ) ) # key = comp2 기능
+# print( min(t, key = lambda x: (x[1],x[2])                             ) ) # key = comp3 기능
 
 ############################################################
 # [7-7] sorted 함수의 정렬 기준 전달
 ############################################################
 
 # x = [('apple','red',500),('kiwi','brown',300),('banana','yellow',300)]
-# 
+
 # y1 = sorted(x, key = lambda a : a[0], reverse = True)
 # y2 = sorted(x, key = lambda a : a[1])
 # y3 = sorted(x, key = lambda a : a[2])
 # y4 = sorted(x, key = lambda a : (a[2], a[0]))
-# 
+
 # print(x, y1, y2, y3, y4, sep = '\n')
 
 ############################################################
 # [7-8] 입력된 모든 실수 값들을 정수화(round)후 제곱하기
 ############################################################
+# x = input().split()
+# # 함수는
+# # 반복(
+# #     플롯 ->라운드 ->제곱
+# # )
+# r = list(map(lambda t : round(float(t)) **2 ,x ))
+# print(*r)
 
 
 
@@ -128,14 +135,22 @@
 ############################################################
 # [7-9] 오래된 와인을 찾아라
 ############################################################
+# i = input().split()
+
+# # 함수는
+# # 최소 -> 앞뒤 제거버전 비교
+
+# r = min(i , key= lambda a :int(a[1:-1]))
+# print(r)
 
 
-
-
-############################################################
+#######################################
+# #####################
 # [7-10] 창고 정리
 ############################################################
 
-# x = eval(input())
-# 
-# # 코드 작성
+x = eval(input())
+
+# 코드 작성
+# 정렬-> 튜플[1]은 작은거, 튜플[2]는 큰거 순으로
+print(sorted(x , key= lambda a : (a[1],-a[2])))

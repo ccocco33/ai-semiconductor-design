@@ -250,7 +250,7 @@
 # n = 10
 # t = ('LOW', 'HIGH')
 # print(t[n >= 0])
-# 
+
 # d = {False : 'LOW', True : 'HIGH'}
 # print(d[n >= 0])
 
