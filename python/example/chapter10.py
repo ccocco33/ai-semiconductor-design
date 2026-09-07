@@ -78,15 +78,15 @@
 # [10-13] 없어진 학생은?
 ############################################################
 
-K = int(input())
+# K = int(input())
 
-for x in range(K):
-    N, M = (int(y) for y in input().split())
-    r = [int(y) for y in input().split()]
-    # 코드 작성
-    n = list(range(1,N+1))
-    i = list(set(n)-set(r))
-    print(*i)
+# for x in range(K):
+#     N, M = (int(y) for y in input().split())
+#     r = [int(y) for y in input().split()]
+#     # 코드 작성
+#     n = list(range(1,N+1))
+#     i = list(set(n)-set(r))
+#     print(*i)
      
     
 
