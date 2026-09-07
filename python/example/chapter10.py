@@ -33,12 +33,18 @@
 ############################################################
   
 # a = [1,4,7,10]
-# 
+
 # while True:
 #     m = int(input())
-# 
+
 #     # 코드 작성
-#         
+#     for i in range(len(a)):
+#         if m < a[i]:
+#             a.insert(i,m)
+#             break
+#     else:
+#         a.append(m)
+        
 #     print(a)
 
 ############################################################
@@ -62,22 +68,28 @@
 
 # x = ('kim', 'lee', 'park', 'song', 'moon', 'lew')
 # y = ('min', 'park', 'kong', 'mo', 'lew')
-# 
+
 # # 코드 작성
-# 
+# num = len(set(x)&set(y))
+
 # print( num )
 
 ############################################################
 # [10-13] 없어진 학생은?
 ############################################################
 
-# K = int(input())
-# 
-# for x in range(K):
-#     N, M = (int(y) for y in input().split())
-#     r = [int(y) for y in input().split()]
-#      
-#     # 코드 작성
+K = int(input())
+
+for x in range(K):
+    N, M = (int(y) for y in input().split())
+    r = [int(y) for y in input().split()]
+    # 코드 작성
+    n = list(range(1,N+1))
+    i = list(set(n)-set(r))
+    print(*i)
+     
+    
+
    
 ############################################################
 # [10-15] 문자별 횟수 세기
