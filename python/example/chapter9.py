@@ -321,6 +321,15 @@
 # for a in range(len(t[0])):
 #     for b in range(len(t)):
 #         print(t[b][a], end = ' ')
+
+# t = ((1,2,3,4),(5,6,7,8),(9,10,11,12))
+# z = tuple(zip(*t))
+# for r in z :
+#     for c in r:
+#         print(c, end = ' ')
+# # print()
+# # for r in z:
+# #     print(*r,end = ' ')
         
 
 ############################################################
