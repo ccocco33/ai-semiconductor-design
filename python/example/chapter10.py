@@ -47,6 +47,20 @@
         
 #     print(a)
 
+# a = [1,4,7,10]
+
+# while True:
+#     m = int(input())
+#     if m ==0 :
+#         break
+#     for d in range(len(a)):
+#         if m<a[d]:
+#             a.insert(a.index(a[d]),m)
+#             break
+#         elif m>a[-1]:
+#             a.append(m)
+#             break
+#     print(a)
 ############################################################
 # [10-11] set 연산자 및 메서드 동작 이해
 ############################################################
