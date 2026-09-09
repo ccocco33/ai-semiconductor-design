@@ -59,6 +59,12 @@ print('b:', b)
 print('c:', c)
 print('d:', d)
 
+m = x.index(max(x), p+1)
+=> p+1번째 인덱스에서부터 검색하는것 (예를들어 p가 1 이면 2번 인덱스부터 뒤에까지중 맥스인 인덱스 값을 주는것)
+
+
+
+
 # 1과. Sequence Slicing & Mutable Sequence & 얕은 복사
 
 ## 1. Sequence 타입의 Slicing 연산
