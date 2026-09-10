@@ -23,6 +23,8 @@ min max scaler하면서 사용한식 함수 만들기
 traning 을 한 결과로 test
 ↓
 결과 프린트! 끝!
+
+
 # activation : 신경망 한층에서 계산한 결과를 한번 변환해주는 함수
 (ex)Dense(1, activation='sigmoid')
 입력
@@ -83,3 +85,17 @@ metrics=['precision']
 metrics=['recall']
 (4) AUC : 0과 1을 얼마나 잘 구분하는지를 평가하는 지표
 metrics=['AUC']
+
+                 compile()
+                    │
+       ┌────────────┼────────────┐
+       ↓            ↓            ↓
+   optimizer      loss        metrics
+       │            │            │
+       ↓            ↓            ↓
+  어떻게 고칠까?  얼마나 틀렸나?  얼마나 잘했나?
+       │            │            │
+      SGD          MSE         Accuracy
+      Adam         BCE         Precision
+      RMSprop      CCE         Recall
+                   SCCE        AUC
