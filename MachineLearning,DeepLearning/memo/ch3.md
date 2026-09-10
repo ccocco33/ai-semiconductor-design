@@ -53,7 +53,7 @@ optimizer=tf.keras.optimizers.Adam(learning_rate=0.001)
 
 (3) RMSprop: learning_rate를 조절하면서 학습
 
-# loss : 모델의 예직이 정답과 얼마나 다른지를 숫자로 나타내는 함수
+# loss : 모델의 예측이 정답과 얼마나 다른지를 숫자로 나타내는 함수
 (ex)
 (1) Mean Squared Error (MSE) : 예측값과 정답의 차이를 제곱해서 평균 , 주로 Regression(회귀) 에 사용
 loss='mean_squared_error'  / loss=tf.keras.losses.MeanSquaredError()
