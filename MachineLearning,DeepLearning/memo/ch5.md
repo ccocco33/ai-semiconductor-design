@@ -1,3 +1,48 @@
+batch : 학습데이터를 한번에 몇개씩 나누어서 모델에게 줄것인가?
+(ex) model.fit(train_data,train_labels,batch_size=100,epochs = 10)
+=> (전체 데이터 n장을 100장씩 나누어서 학습)* epochs = 10 번
+
+Validation : 모델이 학습에 사용하지 않은 데이터를 이용해서 현재 모델의 상태를 확인 하는것 , (underfitting / overfitting) -> 이거 확인 할 수 있음
+전체 데이터
+────────────────────────
+        10,000개
+
+      ↓ 나누기
+
+Train                     Validation
+8,000개                    2,000개
+   ↓                          ↓
+모델 학습                    평가
+(ex) history = model.fit(train_data,train_labels, shuffle = True,epochs = 10, validation_data = (test_data,test_labels))
+
+만약 내가 갖고있던 데이터에서 90프로는 학습용, 10프로는 벨리데이션 용 으로 할당하고 싶다면,,,
+
+train_data,val_data,train_labels,val_lables = train_test_split(
+     train_data,train_labels,test_size = 0.1,random_state = 123
+)
+model.fit(
+     train_data,train_labels,batch_size = 100,eposhs = 10,validation_data = val_data,val_labels
+)
+
+
+Conv2D : 필터를 이용해서 feature map을 만드는 레이어 // 이미지의 특징을 찾는 레이어
+(ex)tf.keras.layers.Conv2D(
+    64, # 필터 64개
+    3, # 3*3 사이즈
+    padding='same', # 결과 레이어가 그전과 사이즈 같게함
+    activation='relu' # # 음수 ->0 양수-> 그대로
+)
+
+MaxPool2D: 이미지의 크기를 줄이면서 중요한 특징을 남기는 역할
+(ex)MaxPooling2D( # 이미지의 크기를 줄이자
+    pool_size=2, # 2*2 사이즈에서 가장 큰값을 출력하자
+    strides=2 * 2칸씩 이동하자
+)
+Dropout : 학습할때마다 랜덤하게 일부 뉴런을 꺼버린다. => 특정 뉴런에 의존 할까봐
+(ex) model.add(tf.keras.layers.Dropout(rate = 0.4)) # 40프로 랜덤하게 비활성화
+
+
+
 # 5과. Multi Layer Perceptron (MLP)
 
 ## 1. MNIST Classification
