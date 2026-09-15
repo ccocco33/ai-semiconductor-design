@@ -27,7 +27,7 @@ def processImage(frame):
 
     # 모델의 입력 형태로 수정: (1,224,224,3)
     # Normalization 처리 안함 (모델 내에서 -1 ~ 1로 변환 처리함)
-    img = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
+    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
     img = np.expand_dims(img, 0)
 
     # 모델에 입력하여 결과 얻기
