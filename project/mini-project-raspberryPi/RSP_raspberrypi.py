@@ -1,58 +1,56 @@
-
-# 현재 문제점
-# 학습한 이미지는 전체(배경까지 있는) 이미지를 기준으로 학습
-# -> 이 코드는 손만 따로 떼써 판별 하다보니 낮은 신뢰도 또는 인식을 못하는 문제 발생
 # =========================================================
-# 1. 모듈 로딩
+# RPS LiteRT + Raspberry Pi Camera
+# 수정 사항:
+# 1) AI 추론은 색상 오버레이가 적용되기 전 원본 프레임 사용
+# 2) 모델 입력은 float32 + NCHW (1, 3, 320, 320)
+# 3) Letterbox 좌표를 원본 카메라 좌표로 복원
 # =========================================================
 
-import tflite_runtime.interpreter as tflite
-from cvzone.HandTrackingModule import HandDetector
-
+import ai_edge_litert.interpreter as tflite
 import numpy as np
 import time
 import cv2
 
+from collections import Counter
+from cvzone.HandTrackingModule import HandDetector
 
-# =========================================================
-# 2. LiteRT 모델 설정
-# =========================================================
+
+# -----------------------------
+# 1. 모델 설정
+# -----------------------------
 
 modelPath = "best.tflite"
 
-# modelPath = "best_int8.tflite"
-# modelPath = "best_w8a32.tflite"
-
-print("model path:", modelPath)
-
-interpreter = tflite.Interpreter(
-    model_path=modelPath
-)
-
+interpreter = tflite.Interpreter(model_path=modelPath)
 interpreter.allocate_tensors()
 
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
-print(input_details)
-print(output_details)
+print("Input details:", input_details)
+print("Output details:", output_details)
 
 input_index = input_details[0]["index"]
 output_index = output_details[0]["index"]
-
 input_dtype = input_details[0]["dtype"]
-output_dtype = output_details[0]["dtype"]
+input_shape = input_details[0]["shape"]
 
-# 기존 모델 구조: (1,3,320,320)
-height = input_details[0]["shape"][2]
-width = input_details[0]["shape"][3]
+if input_dtype != np.float32:
+    raise ValueError(f"float32 모델이 아닙니다: {input_dtype}")
 
-print("model input shape:", (height, width))
+if len(input_shape) != 4 or input_shape[1] != 3:
+    raise ValueError(f"현재 코드는 NCHW 모델을 기준으로 합니다: {input_shape}")
+
+IMG_H = int(input_shape[2])
+IMG_W = int(input_shape[3])
+
+print("Model input shape:", input_shape)
+print("Model size:", IMG_W, IMG_H)
 
 
-# =========================================================
-# 3. 기본 설정
-# =========================================================
+# -----------------------------
+# 2. 기본 설정
+# -----------------------------
 
 ansToText = {
     0: "scissors",
@@ -66,917 +64,1034 @@ colorList = [
     (0, 0, 255)
 ]
 
-IMG_SIZE = 320
-
 CONF_TH = 0.4
 IOU_TH = 0.45
 
+P1_COLOR = (0, 255, 255)
+P2_COLOR = (0, 255, 0)
+WINNER_P1_COLOR = P1_COLOR
+WINNER_P2_COLOR = P2_COLOR
+DRAW_COLOR = (255, 0, 0)
 
-# =========================================================
-# 4. 게임 및 배경 설정
-# =========================================================
+UI_BG_COLOR = (35, 35, 35)
+UI_WHITE = (255, 255, 255)
+UI_GRAY = (180, 180, 180)
+UI_YELLOW = (0, 255, 255)
+UI_RED = (50, 50, 255)
 
-# 손 2개 탐지 후 가위바위보 인식 시간
-GESTURE_RECOGNITION_TIME = 0.5
+UI_FONT = cv2.FONT_HERSHEY_SIMPLEX
+UI_FONT_BOLD = cv2.FONT_HERSHEY_DUPLEX
 
-# 결과 표시 시간
-RESULT_DISPLAY_TIME = 2.0
+UI_PANEL_ALPHA = 0.78
+PLAYER_OVERLAY_ALPHA = 0.30
+RESULT_OVERLAY_ALPHA = 0.55
 
-# BGR 색상
-P1_BG_COLOR = (0, 255, 255)      # 노란색
-P2_BG_COLOR = (144, 238, 144)    # 연두색
-DRAW_BG_COLOR = (255, 0, 0)      # 파란색
-
-BG_ALPHA = 0.45
-
-# 손 Bounding Box 여백
-HAND_OFFSET = 20
+COUNTDOWN_TIME = 3.0
+COLLECT_TIME = 0.5
+RESULT_DISPLAY_TIME = 3.0
+ERROR_DISPLAY_TIME = 1.5
+HAND_LOST_LIMIT = 0.2
 
 
-# =========================================================
-# 5. HandDetector 설정
-# =========================================================
+# -----------------------------
+# 3. 상태
+# -----------------------------
 
-# 3명 이상 감지 여부도 확인하기 위해 4개로 설정
+WAITING = 0
+COUNTDOWN = 1
+COLLECTING = 2
+SHOW_RESULT = 3
+SHOW_ERROR = 4
+
+game_state = WAITING
+
+countdown_start = None
+collect_start = None
+result_start = None
+error_start = None
+last_two_hands_time = None
+
+error_text = ""
+result_color = DRAW_COLOR
+
+p1_votes = []
+p2_votes = []
+
+p1_result = None
+p2_result = None
+winner = None
+
+
+# -----------------------------
+# 4. 손 검출기
+# -----------------------------
+
 detector = HandDetector(
-    maxHands=4,
-    detectionCon=0.5
+    staticMode=False,
+    maxHands=2,
+    detectionCon=0.7,
+    minTrackCon=0.5
 )
 
 
-# =========================================================
-# 6. Letterbox
-# =========================================================
-
-def letterbox(
-    img,
-    new_shape=(320, 320),
-    color=(114, 114, 114)
-):
-
-    h, w = img.shape[:2]
-
-    nh, nw = new_shape
-
-    r = min(nw / w, nh / h)
-
-    new_w = int(w * r)
-    new_h = int(h * r)
-
-    resized = cv2.resize(
-        img,
-        (new_w, new_h)
-    )
-
-    pad_w = nw - new_w
-    pad_h = nh - new_h
-
-    pad_x = pad_w // 2
-    pad_y = pad_h // 2
-
-    padded = cv2.copyMakeBorder(
-        resized,
-        pad_y,
-        pad_y,
-        pad_x,
-        pad_x,
-        cv2.BORDER_CONSTANT,
-        value=color
-    )
-
-    return padded, r, pad_x, pad_y
-
-
-# =========================================================
-# 7. YOLO 모델 입력 처리
-# =========================================================
-
-def makeModelInput(img):
-
-    img_rgb = cv2.cvtColor(
-        img,
-        cv2.COLOR_BGR2RGB
-    )
-
-    img_lb, r, pad_x, pad_y = letterbox(
-        img_rgb,
-        (IMG_SIZE, IMG_SIZE)
-    )
-
-    img = img_lb.astype(np.float32) / 255.0
-
-    img = np.expand_dims(
-        img,
-        axis=0
-    )
-
-    img = np.transpose(
-        img,
-        (0, 3, 1, 2)
-    )
-
-    return img, r, pad_x, pad_y
-
-
-# =========================================================
-# 8. 손 crop 이미지에서 가위바위보 탐지
-# =========================================================
-# =========================================================
-# 8. 손 crop 이미지에서 가위바위보 탐지
-# =========================================================
-def processCrop(crop, interpreter, input_details, output_details):
-
-    # 이미지가 비어 있는 경우
-    if crop is None or crop.size == 0:
-        print("None img")
-        return None
-
-    # BGR -> RGB
-    crop = cv2.cvtColor(
-        crop,
-        cv2.COLOR_BGR2RGB
-    )
-
-    # 이미지 크기 고정
-    crop = cv2.resize(
-        crop,
-        (320, 320),
-        interpolation=cv2.INTER_AREA
-    )
-
-    # Float32 변환 및 정규화
-    crop = crop.astype(np.float32) / 255.0
-
-    # HWC -> CHW
-    crop = np.transpose(
-        crop,
-        (2, 0, 1)
-    )
-
-    # 배치 차원 추가
-    crop = np.expand_dims(
-        crop,
-        axis=0
-    )
-
-    print(
-        "processCrop input shape:",
-        crop.shape
-    )
-
-    # 모델 입력
-    interpreter.set_tensor(
-        input_details[0]["index"],
-        crop
-    )
-
-    # 추론
-    interpreter.invoke()
-
-    # 모델 출력
-    output = interpreter.get_tensor(
-        output_details[0]["index"]
-    )
-
-    # 출력 형태:
-    # (1, 7, 2100)
-    #
-    # 배치 차원 제거
-    # (7, 2100)
-    raw = output[0]
-
-    # (7, 2100) -> (2100, 7)
-    raw = raw.transpose()
-
-    # 클래스 점수 추출
-    # 앞의 4개: bounding box 정보
-    # 뒤의 3개: scissors, rock, paper
-    class_scores = raw[:, 4:]
-
-    # 각 탐지 후보의 최고 클래스 점수
-    confidence = np.max(
-        class_scores,
-        axis=1
-    )
-
-    # 각 탐지 후보의 클래스 번호
-    class_ids = np.argmax(
-        class_scores,
-        axis=1
-    )
-
-    # 가장 높은 confidence를 가진 후보 선택
-    best_index = np.argmax(
-        confidence
-    )
-
-    best_confidence = float(
-        confidence[best_index]
-    )
-
-    best_class_id = int(
-        class_ids[best_index]
-    )
-
-    # 신뢰도 임계값
-    CONFIDENCE_THRESHOLD = 0.25
-
-    # 신뢰도가 낮으면 인식 실패
-    if best_confidence < CONFIDENCE_THRESHOLD:
-        print("Low reliability: ",best_confidence)
-        return None
-
-    # 결과를 딕셔너리로 반환
-    result = {
-        "class_id": best_class_id,
-        "confidence": best_confidence
-    }
-
-    print(
-        "Detection result:",
-        result
-    )
-
-    return result
-
-
-# =========================================================
-# 9. 손 Bounding Box를 이용한 crop
-# =========================================================
-
-def cropHand(frame, hand):
-
-    x, y, w, h = hand["bbox"]
-
-    frame_h, frame_w = frame.shape[:2]
-
-    # Offset 적용
-    x1 = max(0, x - HAND_OFFSET)
-    y1 = max(0, y - HAND_OFFSET)
-
-    x2 = min(frame_w, x + w + HAND_OFFSET)
-    y2 = min(frame_h, y + h + HAND_OFFSET)
-
-    crop = frame[y1:y2, x1:x2]
-
-    return crop, (x1, y1, x2, y2)
-
-
-# =========================================================
-# 10. 화면 텍스트 출력
-# =========================================================
-
-def drawText(
-    frame,
-    text,
-    position,
-    font_scale=0.6,
-    color=(255, 255, 255),
-    thickness=2
-):
-
-    cv2.putText(
-        frame,
-        text,
-        position,
-        cv2.FONT_HERSHEY_SIMPLEX,
-        font_scale,
-        color,
-        thickness
-    )
-
-
-# =========================================================
-# 11. HandDetector Bounding Box 그리기
-# =========================================================
-
-def drawHandBox(
-    frame,
-    bbox,
-    color=(255, 255, 255),
-    label=""
-):
-
-    x1, y1, x2, y2 = bbox
-
-    cv2.rectangle(
-        frame,
-        (x1, y1),
-        (x2, y2),
-        color,
-        2
-    )
-
-    if label != "":
-
-        drawText(
+# -----------------------------
+# 5. UI 함수
+# -----------------------------
+
+def drawText(frame, text, position, font_scale=0.7,
+             color=UI_WHITE, thickness=2,
+             font=UI_FONT, background=None):
+
+    x, y = position
+
+    if background is not None:
+        (tw, th), baseline = cv2.getTextSize(
+            text, font, font_scale, thickness
+        )
+        cv2.rectangle(
             frame,
-            label,
-            (x1, max(y1 - 8, 15)),
-            0.45,
-            color,
-            2
+            (x - 5, y - th - 5),
+            (x + tw + 5, y + baseline + 5),
+            background,
+            -1
         )
 
+    cv2.putText(
+        frame, text, (int(x), int(y)),
+        font, font_scale, color, thickness,
+        cv2.LINE_AA
+    )
 
-# =========================================================
-# 12. 배경 색상 적용
-# =========================================================
 
-def applyBackgroundColor(
-    frame,
-    hand_boxes,
-    mode="split",
-    split_x=None,
-    bg_color=None
-):
+def drawCenteredText(frame, text, y, font_scale=1.0,
+                     color=UI_WHITE, thickness=2,
+                     font=UI_FONT_BOLD):
 
     h, w = frame.shape[:2]
 
-    overlay = frame.copy()
-
-    # 손 영역 마스크
-    hand_mask = np.zeros(
-        (h, w),
-        dtype=np.uint8
+    (tw, th), _ = cv2.getTextSize(
+        text, font, font_scale, thickness
     )
 
-    for bbox in hand_boxes:
+    x = (w - tw) // 2
 
-        x1, y1, x2, y2 = bbox
+    drawText(
+        frame, text, (x, y),
+        font_scale, color, thickness, font
+    )
 
-        x1 = max(0, x1)
-        y1 = max(0, y1)
 
-        x2 = min(w, x2)
-        y2 = min(h, y2)
+def drawPanel(frame, x1, y1, x2, y2,
+              color=UI_BG_COLOR, alpha=UI_PANEL_ALPHA):
 
-        hand_mask[y1:y2, x1:x2] = 255
+    overlay = frame.copy()
 
-    # 좌우 분할
-    if mode == "split":
-
-        if split_x is None:
-
-            split_x = w // 2
-
-        overlay[:, :split_x] = P1_BG_COLOR
-
-        overlay[:, split_x:] = P2_BG_COLOR
-
-    # 단일 결과 색상
-    elif mode == "winner":
-
-        overlay[:, :] = bg_color
-
-    # 원본 영상과 혼합
-    blended = cv2.addWeighted(
-        frame,
-        1 - BG_ALPHA,
+    cv2.rectangle(
         overlay,
-        BG_ALPHA,
+        (int(x1), int(y1)),
+        (int(x2), int(y2)),
+        color,
+        -1
+    )
+
+    return cv2.addWeighted(
+        overlay, alpha,
+        frame, 1.0 - alpha,
         0
     )
 
-    background_mask = (hand_mask == 0)
 
-    frame[background_mask] = blended[background_mask]
+def drawPlayerHeader(frame, p1_gesture=None, p2_gesture=None):
+
+    h, w = frame.shape[:2]
+
+    frame = drawPanel(
+        frame, 0, 0, w, 48,
+        UI_BG_COLOR, 0.88
+    )
+
+    cv2.line(
+        frame, (w // 2, 5), (w // 2, 43),
+        UI_GRAY, 1
+    )
+
+    p1_text = "P1  |  " + (
+        p1_gesture.upper() if p1_gesture else "---"
+    )
+
+    p2_text = "P2  |  " + (
+        p2_gesture.upper() if p2_gesture else "---"
+    )
+
+    drawText(
+        frame, p1_text, (15, 31),
+        0.55, P1_COLOR, 2, UI_FONT_BOLD
+    )
+
+    (tw, th), _ = cv2.getTextSize(
+        p2_text, UI_FONT_BOLD, 0.55, 2
+    )
+
+    drawText(
+        frame, p2_text, (w - tw - 15, 31),
+        0.55, P2_COLOR, 2, UI_FONT_BOLD
+    )
 
     return frame
 
 
-# =========================================================
-# 13. 승패 판정
-# =========================================================
+def drawGameStatus(frame, state, countdown_number=None):
+
+    h, w = frame.shape[:2]
+
+    if state == WAITING:
+        frame = drawPanel(
+            frame, 35, 60, w - 35, 135,
+            UI_BG_COLOR, 0.75
+        )
+
+        drawCenteredText(
+            frame, "READY", 95,
+            0.85, UI_YELLOW, 2
+        )
+
+        drawCenteredText(
+            frame, "Show 2 hands to start", 120,
+            0.40, UI_WHITE, 1, UI_FONT
+        )
+
+    elif state == COUNTDOWN:
+        frame = drawPanel(
+            frame, 25, 55, w - 25, 215,
+            UI_BG_COLOR, 0.80
+        )
+
+        drawCenteredText(
+            frame, "GET READY!", 95,
+            0.70, UI_YELLOW, 2
+        )
+
+        if countdown_number is not None:
+            drawCenteredText(
+                frame, str(countdown_number), 180,
+                2.8, UI_WHITE, 5
+            )
+
+    elif state == COLLECTING:
+        frame = drawPanel(
+            frame, 20, 55, w - 20, 100,
+            UI_BG_COLOR, 0.72
+        )
+
+        drawCenteredText(
+            frame, "SHOW YOUR GESTURE!", 88,
+            0.52, UI_YELLOW, 2
+        )
+
+    return frame
+
+
+def drawResultUI(frame, p1_result, p2_result, winner):
+
+    h, w = frame.shape[:2]
+
+    frame = drawPanel(
+        frame, 15, 60, w - 15, 215,
+        UI_BG_COLOR, 0.88
+    )
+
+    drawCenteredText(
+        frame, "RESULT", 88,
+        0.58, UI_WHITE, 2
+    )
+
+    p1_text = f"P1: {p1_result.upper()}" if p1_result else "P1: ---"
+    p2_text = f"P2: {p2_result.upper()}" if p2_result else "P2: ---"
+
+    drawText(
+        frame, p1_text, (30, 132),
+        0.48, P1_COLOR, 2, UI_FONT_BOLD
+    )
+
+    drawCenteredText(
+        frame, "VS", 132,
+        0.42, UI_GRAY, 1, UI_FONT
+    )
+
+    (tw, th), _ = cv2.getTextSize(
+        p2_text, UI_FONT_BOLD, 0.48, 2
+    )
+
+    drawText(
+        frame, p2_text, (w - tw - 30, 132),
+        0.48, P2_COLOR, 2, UI_FONT_BOLD
+    )
+
+    if winner == "P1 Wins":
+        winner_color = WINNER_P1_COLOR
+        winner_text = "P1 WINS!"
+    elif winner == "P2 Wins":
+        winner_color = WINNER_P2_COLOR
+        winner_text = "P2 WINS!"
+    elif winner == "Draw":
+        winner_color = DRAW_COLOR
+        winner_text = "DRAW!"
+    else:
+        winner_color = UI_RED
+        winner_text = "INVALID"
+
+    drawCenteredText(
+        frame, winner_text, 190,
+        0.95, winner_color, 3
+    )
+
+    return frame
+
+
+def drawErrorUI(frame, text):
+
+    h, w = frame.shape[:2]
+
+    frame = drawPanel(
+        frame, 20, 65, w - 20, 150,
+        UI_BG_COLOR, 0.85
+    )
+
+    drawCenteredText(
+        frame, "ERROR", 100,
+        0.65, UI_RED, 2
+    )
+
+    drawCenteredText(
+        frame, text, 130,
+        0.42, UI_WHITE, 1, UI_FONT
+    )
+
+    return frame
+
+
+def drawBottomStatus(frame, hand_count, fps):
+
+    h, w = frame.shape[:2]
+
+    frame = drawPanel(
+        frame, 0, h - 28, w, h,
+        UI_BG_COLOR, 0.85
+    )
+
+    drawText(
+        frame, f"Hands: {hand_count}",
+        (10, h - 9), 0.40, UI_WHITE, 1
+    )
+
+    fps_text = f"FPS: {fps:.1f}"
+
+    (tw, th), _ = cv2.getTextSize(
+        fps_text, UI_FONT, 0.40, 1
+    )
+
+    drawText(
+        frame, fps_text,
+        (w - tw - 10, h - 9),
+        0.40, UI_GRAY, 1
+    )
+
+    return frame
+
+
+# -----------------------------
+# 6. 이미지 전처리
+# -----------------------------
+
+def letterbox(img, new_shape=(IMG_H, IMG_W),
+              color=(114, 114, 114)):
+
+    h, w = img.shape[:2]
+    nh, nw = new_shape
+
+    ratio = min(nw / w, nh / h)
+
+    new_w = int(round(w * ratio))
+    new_h = int(round(h * ratio))
+
+    resized = cv2.resize(img, (new_w, new_h))
+
+    pad_w = nw - new_w
+    pad_h = nh - new_h
+
+    pad_left = pad_w // 2
+    pad_top = pad_h // 2
+
+    pad_right = pad_w - pad_left
+    pad_bottom = pad_h - pad_top
+
+    padded = cv2.copyMakeBorder(
+        resized,
+        pad_top, pad_bottom,
+        pad_left, pad_right,
+        cv2.BORDER_CONSTANT,
+        value=color
+    )
+
+    return padded, ratio, pad_left, pad_top
+
+
+def preprocess_image(frame):
+
+    img_rgb = cv2.cvtColor(
+        frame, cv2.COLOR_BGR2RGB
+    )
+
+    img_lb, ratio, pad_x, pad_y = letterbox(
+        img_rgb, (IMG_H, IMG_W)
+    )
+
+    # float32 모델이므로 0~1 정규화
+    img = img_lb.astype(np.float32) / 255.0
+
+    # NHWC: (H, W, C) -> (1, H, W, C)
+    img = np.expand_dims(img, axis=0)
+
+    # NHWC -> NCHW
+    # (1, 320, 320, 3) -> (1, 3, 320, 320)
+    img = np.transpose(img, (0, 3, 1, 2))
+
+    return img.astype(np.float32), ratio, pad_x, pad_y
+
+
+# -----------------------------
+# 7. NMS
+# -----------------------------
+
+def apply_nms(boxes, scores):
+
+    if len(boxes) == 0:
+        return []
+
+    indices = cv2.dnn.NMSBoxes(
+        boxes,
+        scores.tolist(),
+        CONF_TH,
+        IOU_TH
+    )
+
+    if len(indices) == 0:
+        return []
+
+    return np.array(indices).flatten()
+
+
+# -----------------------------
+# 8. LiteRT 탐지
+# -----------------------------
+
+def processImage(inference_frame, draw_frame=None):
+
+    frame_height, frame_width = inference_frame.shape[:2]
+
+    img, ratio, pad_x, pad_y = preprocess_image(
+        inference_frame
+    )
+
+    # 반드시 원본 inference_frame으로만 추론
+    interpreter.set_tensor(
+        input_index,
+        img
+    )
+
+    interpreter.invoke()
+
+    raw_output = interpreter.get_tensor(
+        output_index
+    )
+
+    # (1, 7, 2100) -> (2100, 7)
+    raw = raw_output[0].transpose()
+
+    # x, y, w, h, class1, class2, class3
+    class_scores = raw[:, 4:]
+
+    confidences = np.max(
+        class_scores, axis=1
+    )
+
+    class_ids = np.argmax(
+        class_scores, axis=1
+    )
+
+    keep_mask = confidences > CONF_TH
+
+    filtered_raw = raw[keep_mask]
+    scores = confidences[keep_mask]
+    classes = class_ids[keep_mask]
+
+    if len(filtered_raw) == 0:
+        return []
+
+    cx = filtered_raw[:, 0]
+    cy = filtered_raw[:, 1]
+    box_w = filtered_raw[:, 2]
+    box_h = filtered_raw[:, 3]
+
+    # 모델 좌표가 0~1 normalized라고 가정
+    x = (cx - box_w / 2) * IMG_W
+    y = (cy - box_h / 2) * IMG_H
+
+    box_w = box_w * IMG_W
+    box_h = box_h * IMG_H
+
+    boxes = np.stack(
+        [x, y, box_w, box_h],
+        axis=-1
+    )
+
+    boxes_for_nms = [
+        [
+            int(bx), int(by),
+            int(bw), int(bh)
+        ]
+        for bx, by, bw, bh in boxes
+    ]
+
+    keep_indices = apply_nms(
+        boxes_for_nms, scores
+    )
+
+    detections = []
+
+    for i in keep_indices:
+
+        bx, by, bw, bh = boxes[i]
+
+        # letterbox 좌표 -> 원본 프레임 좌표
+        x1 = (bx - pad_x) / ratio
+        y1 = (by - pad_y) / ratio
+        x2 = (bx + bw - pad_x) / ratio
+        y2 = (by + bh - pad_y) / ratio
+
+        x1 = int(np.clip(x1, 0, frame_width - 1))
+        y1 = int(np.clip(y1, 0, frame_height - 1))
+        x2 = int(np.clip(x2, 0, frame_width - 1))
+        y2 = int(np.clip(y2, 0, frame_height - 1))
+
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        class_id = int(classes[i])
+        score = float(scores[i])
+
+        detections.append({
+            "x1": x1,
+            "y1": y1,
+            "x2": x2,
+            "y2": y2,
+            "center_x": (x1 + x2) // 2,
+            "center_y": (y1 + y2) // 2,
+            "score": score,
+            "class_id": class_id
+        })
+
+    detections.sort(
+        key=lambda d: d["center_x"]
+    )
+
+    # 화면 표시용 박스는 추론 후 draw_frame에 그림
+    if draw_frame is not None:
+
+        for det in detections:
+
+            x1 = det["x1"]
+            y1 = det["y1"]
+            x2 = det["x2"]
+            y2 = det["y2"]
+
+            class_id = det["class_id"]
+            score = det["score"]
+
+            if class_id not in ansToText:
+                continue
+
+            color = colorList[class_id]
+
+            cv2.rectangle(
+                draw_frame,
+                (x1, y1),
+                (x2, y2),
+                color,
+                2
+            )
+
+            drawText(
+                draw_frame,
+                f"{ansToText[class_id]} {int(score * 100)}%",
+                (x1, max(y1 - 7, 15)),
+                0.5,
+                color,
+                2
+            )
+
+    return detections
+
+
+# -----------------------------
+# 9. 플레이어 분리 및 판정
+# -----------------------------
+
+def separatePlayers(detections):
+
+    if len(detections) != 2:
+        return None, None
+
+    detections = sorted(
+        detections,
+        key=lambda d: d["center_x"]
+    )
+
+    return detections[0], detections[1]
+
 
 def checkWinner(p1_gesture, p2_gesture):
 
     if p1_gesture == p2_gesture:
-
-        return "무승부"
+        return "Draw"
 
     if p1_gesture == "scissors":
+        return "P1 Wins" if p2_gesture == "paper" else "P2 Wins"
 
-        if p2_gesture == "paper":
+    if p1_gesture == "rock":
+        return "P1 Wins" if p2_gesture == "scissors" else "P2 Wins"
 
-            return "P1 승리"
+    if p1_gesture == "paper":
+        return "P1 Wins" if p2_gesture == "rock" else "P2 Wins"
 
-        return "P2 승리"
-
-    elif p1_gesture == "rock":
-
-        if p2_gesture == "scissors":
-
-            return "P1 승리"
-
-        return "P2 승리"
-
-    elif p1_gesture == "paper":
-
-        if p2_gesture == "rock":
-
-            return "P1 승리"
-
-        return "P2 승리"
-
-    return "판정 오류"
+    return "Invalid"
 
 
-# =========================================================
-# 14. 카메라 설정
-# =========================================================
+def getMajority(votes):
 
-cap = cv2.VideoCapture(0)
+    if len(votes) == 0:
+        return None
 
-cap.set(
-    cv2.CAP_PROP_FRAME_WIDTH,
-    320
-)
-
-cap.set(
-    cv2.CAP_PROP_FRAME_HEIGHT,
-    240
-)
-
-cap.set(
-    cv2.CAP_PROP_BUFFERSIZE,
-    1
-)
-
-cv2.namedWindow(
-    "cam",
-    cv2.WINDOW_NORMAL
-)
-
-cv2.resizeWindow(
-    "cam",
-    320 + 40,
-    240 + 60
-)
+    return Counter(votes).most_common(1)[0][0]
 
 
-# =========================================================
-# 15. 게임 상태 변수
-# =========================================================
+def getResultColor(winner):
 
-recognition_start = None
+    if winner == "P1 Wins":
+        return WINNER_P1_COLOR
 
-result_text = ""
+    if winner == "P2 Wins":
+        return WINNER_P2_COLOR
 
-result_time = None
-
-result_bg_color = None
-
-result_detections = []
-
-result_hand_boxes = []
-
-startTime = time.time()
+    return DRAW_COLOR
 
 
-# =========================================================
-# 16. 메인 루프
-# =========================================================
+# -----------------------------
+# 10. 화면 오버레이
+# -----------------------------
 
-while cap.isOpened():
+def applyHandOverlay(frame, hands, original_frame):
 
-    ret, frame = cap.read()
+    if len(hands) != 2:
+        return frame
 
-    if not ret:
+    h, w = frame.shape[:2]
 
-        break
-
-    frame_height, frame_width = frame.shape[:2]
-
-    # -----------------------------------------------------
-    # 1. HandDetector로 손 탐지
-    # -----------------------------------------------------
-
-    hands, _ = detector.findHands(
-        frame,
-        draw=False
-    )
-
-    # 왼쪽 -> 오른쪽 정렬
-    hands = sorted(
+    hands_sorted = sorted(
         hands,
         key=lambda hand: hand["center"][0]
     )
 
-    player_count = len(hands)
+    left_hand = hands_sorted[0]
+    right_hand = hands_sorted[1]
 
-    # 손 Bounding Box 정보
-    hand_boxes = []
+    split_x = int(
+        (
+            left_hand["center"][0]
+            + right_hand["center"][0]
+        ) / 2
+    )
+
+    split_x = int(np.clip(split_x, 0, w))
+
+    overlay = frame.copy()
+
+    cv2.rectangle(
+        overlay, (0, 0), (split_x, h),
+        P1_COLOR, -1
+    )
+
+    cv2.rectangle(
+        overlay, (split_x, 0), (w, h),
+        P2_COLOR, -1
+    )
+
+    frame = cv2.addWeighted(
+        overlay,
+        PLAYER_OVERLAY_ALPHA,
+        frame,
+        1.0 - PLAYER_OVERLAY_ALPHA,
+        0
+    )
+
+    # 손 영역은 원본으로 복원
+    for hand in (left_hand, right_hand):
+
+        x, y, bw, bh = hand["bbox"]
+
+        x1 = max(0, int(x))
+        y1 = max(0, int(y))
+        x2 = min(w, int(x + bw))
+        y2 = min(h, int(y + bh))
+
+        if x2 > x1 and y2 > y1:
+            frame[y1:y2, x1:x2] = original_frame[y1:y2, x1:x2]
+
+    for hand, color in [
+        (left_hand, P1_COLOR),
+        (right_hand, P2_COLOR)
+    ]:
+
+        x, y, bw, bh = hand["bbox"]
+
+        x1 = max(0, int(x))
+        y1 = max(0, int(y))
+        x2 = min(w - 1, int(x + bw))
+        y2 = min(h - 1, int(y + bh))
+
+        cv2.rectangle(
+            frame, (x1, y1), (x2, y2),
+            color, 2
+        )
+
+    drawText(
+        frame, "P1", (15, 75),
+        0.65, P1_COLOR, 2, UI_FONT_BOLD
+    )
+
+    drawText(
+        frame, "P2", (w - 45, 75),
+        0.65, P2_COLOR, 2, UI_FONT_BOLD
+    )
+
+    return frame
+
+
+def applyResultOverlay(frame, result_color, hands, original_frame):
+
+    h, w = frame.shape[:2]
+
+    overlay = np.zeros_like(frame)
+    overlay[:] = result_color
+
+    result_frame = cv2.addWeighted(
+        overlay,
+        RESULT_OVERLAY_ALPHA,
+        frame,
+        1.0 - RESULT_OVERLAY_ALPHA,
+        0
+    )
 
     for hand in hands:
 
-        x, y, w, h = hand["bbox"]
+        x, y, bw, bh = hand["bbox"]
 
-        x1 = max(0, x - HAND_OFFSET)
-        y1 = max(0, y - HAND_OFFSET)
+        x1 = max(0, int(x))
+        y1 = max(0, int(y))
+        x2 = min(w, int(x + bw))
+        y2 = min(h, int(y + bh))
 
-        x2 = min(
-            frame_width,
-            x + w + HAND_OFFSET
+        if x2 > x1 and y2 > y1:
+            result_frame[y1:y2, x1:x2] = (
+                original_frame[y1:y2, x1:x2]
+            )
+
+    return result_frame
+
+
+# -----------------------------
+# 11. 카메라
+# -----------------------------
+
+cap = cv2.VideoCapture(0)
+
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+cap.set(
+    cv2.CAP_PROP_FOURCC,
+    cv2.VideoWriter_fourcc("M", "J", "P", "G")
+)
+
+if not cap.isOpened():
+    raise RuntimeError("Cannot open camera")
+
+cv2.namedWindow("cam", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("cam", 480, 360)
+
+
+# -----------------------------
+# 12. 메인 루프
+# -----------------------------
+
+previous_time = time.time()
+
+try:
+
+    while cap.isOpened():
+
+        ret, frame = cap.read()
+
+        if not ret:
+            break
+
+        frame = cv2.flip(frame, 1)
+
+        current_time = time.time()
+        original_frame = frame.copy()
+
+        # 손 검출은 원본 프레임에서 수행
+        hands, _ = detector.findHands(
+            original_frame.copy(),
+            draw=False,
+            flipType=False
         )
 
-        y2 = min(
-            frame_height,
-            y + h + HAND_OFFSET
-        )
+        hand_count = len(hands)
+        two_hands_detected = hand_count == 2
 
-        hand_boxes.append(
-            (x1, y1, x2, y2)
-        )
-
-
-    # =====================================================
-    # 2. 결과 표시 중
-    # =====================================================
-
-    if result_text != "":
-
-        elapsed_result = time.time() - result_time
-
-        # 결과 배경 적용
-        applyBackgroundColor(
-            frame,
-            result_hand_boxes,
-            mode="winner",
-            bg_color=result_bg_color
-        )
-
-        # 결과 텍스트
-        drawText(
-            frame,
-            result_text,
-            (10, 140),
-            0.45,
-            (255, 255, 255),
-            2
-        )
-
-        # 결과 당시 손 영역 표시
-        for bbox in result_hand_boxes:
-
-            drawHandBox(
-                frame,
-                bbox,
-                (255, 255, 255)
-            )
-
-        # 2초 경과
-        if elapsed_result >= RESULT_DISPLAY_TIME:
-
-            result_text = ""
-
-            result_time = None
-
-            result_bg_color = None
-
-            result_detections = []
-
-            result_hand_boxes = []
-
-            recognition_start = None
-
-
-    # =====================================================
-    # 3. 일반 게임 상태
-    # =====================================================
-
-    else:
+        # 표시용 프레임
+        display_frame = original_frame.copy()
 
         # -------------------------------------------------
-        # 플레이어 없음
+        # 중요: 추론은 오버레이 이전의 원본 프레임에서 실행
         # -------------------------------------------------
 
-        if player_count == 0:
+        detections = []
+        p1, p2 = None, None
+        two_gestures_detected = False
 
-            recognition_start = None
+        if game_state == COLLECTING:
 
-            drawText(
-                frame,
-                "Waiting for players...",
-                (10, 30),
-                0.6,
-                (0, 255, 255),
-                2
+            detections = processImage(
+                original_frame,
+                draw_frame=display_frame
             )
 
+            p1, p2 = separatePlayers(detections)
+
+            two_gestures_detected = (
+                p1 is not None and p2 is not None
+            )
 
         # -------------------------------------------------
-        # 플레이어 1명
+        # 상태 처리
         # -------------------------------------------------
 
-        elif player_count == 1:
+        if game_state == WAITING:
 
-            recognition_start = None
+            if two_hands_detected:
 
-            drawText(
-                frame,
-                "Player 1 detected",
-                (10, 30),
-                0.6,
-                (0, 255, 255),
-                2
-            )
+                game_state = COUNTDOWN
+                countdown_start = current_time
+                last_two_hands_time = current_time
 
+                p1_votes.clear()
+                p2_votes.clear()
 
-        # -------------------------------------------------
-        # 플레이어 2명
-        # -------------------------------------------------
+                p1_result = None
+                p2_result = None
+                winner = None
 
-        elif player_count == 2:
+        elif game_state == COUNTDOWN:
 
-            # P1, P2
-            p1_hand = hands[0]
-            p2_hand = hands[1]
+            elapsed = current_time - countdown_start
 
-            p1_bbox = hand_boxes[0]
-            p2_bbox = hand_boxes[1]
+            if two_hands_detected:
+                last_two_hands_time = current_time
 
-            # 중간 X 좌표
-            split_x = (
-                p1_hand["center"][0]
-                + p2_hand["center"][0]
-            ) // 2
+            if (
+                last_two_hands_time is None
+                or current_time - last_two_hands_time > HAND_LOST_LIMIT
+            ):
 
-            # 좌우 배경 적용
-            applyBackgroundColor(
-                frame,
-                hand_boxes,
-                mode="split",
-                split_x=split_x
-            )
+                error_text = "Cannot start the game"
+                error_start = current_time
+                game_state = SHOW_ERROR
 
-            # ---------------------------------------------
-            # 손 탐지 후 인식 시작
-            # ---------------------------------------------
+                p1_votes.clear()
+                p2_votes.clear()
 
-            if recognition_start is None:
+            elif elapsed >= COUNTDOWN_TIME:
 
-                recognition_start = time.time()
+                game_state = COLLECTING
+                collect_start = current_time
 
-                # 0.5초 동안 인식
-                # 이후 판정 진행
+                p1_votes.clear()
+                p2_votes.clear()
 
-            elapsed_recognition = (
-                time.time() - recognition_start
-            )
+        elif game_state == COLLECTING:
 
-            remaining = (
-                GESTURE_RECOGNITION_TIME
-                - elapsed_recognition
-            )
+            elapsed_collect = current_time - collect_start
 
-            # ---------------------------------------------
-            # 0.5초 인식
-            # ---------------------------------------------
+            if two_hands_detected and two_gestures_detected:
 
-            if remaining > 0:
+                p1_gesture = ansToText.get(p1["class_id"])
+                p2_gesture = ansToText.get(p2["class_id"])
 
-                drawText(
-                    frame,
-                    "Recognizing gesture...",
-                    (20, 90),
-                    0.55,
-                    (0, 255, 255),
-                    2
-                )
+                if p1_gesture is not None and p2_gesture is not None:
+                    p1_votes.append(p1_gesture)
+                    p2_votes.append(p2_gesture)
 
-                drawText(
-                    frame,
-                    f"{remaining:.1f} sec",
-                    (100, 120),
-                    0.55,
-                    (0, 255, 255),
-                    2
-                )
+            if elapsed_collect >= COLLECT_TIME:
 
-            # ---------------------------------------------
-            # 0.5초 후 판정
-            # ---------------------------------------------
+                p1_result = getMajority(p1_votes)
+                p2_result = getMajority(p2_votes)
 
-            else:
-                print("let's start")
+                if p1_result is None or p2_result is None:
 
-                # P1 손 crop
-                p1_crop, p1_crop_bbox = cropHand(
-                    frame,
-                    p1_hand
-                )
-                # print("p1_cropHand: ",p1_crop, " / p1_crop_bbox: ",p1_crop_bbox)
-
-                # P2 손 crop
-                p2_crop, p2_crop_bbox = cropHand(
-                    frame,
-                    p2_hand
-                )
-                # print("p2_cropHand: ",p1_crop, " / p2_crop_bbox: ",p1_crop_bbox)
-
-                # YOLO 가위바위보 분류
-                p1_result = processCrop(
-                    p1_crop,
-                    interpreter,
-                    input_details,
-                    output_details
-                )
-                print("p1_result type:", p1_result)
-                p2_result = processCrop(
-                    p2_crop,
-                    interpreter,
-                    input_details,
-                    output_details
-                )
-                print("p2_result type:", p2_result)
-                # -----------------------------------------
-                # 손은 탐지되었으나 분류 실패
-                # -----------------------------------------
-
-                if (
-                    p1_result is None
-                    or p2_result is None
-                ):
-
-                    result_text = "Gesture recognition failed"
-
-                    result_bg_color = (0, 0, 0)
+                    error_text = "Cannot detect gestures"
+                    error_start = current_time
+                    game_state = SHOW_ERROR
 
                 else:
 
-                    # 클래스 -> 손 모양
-                    p1_gesture = ansToText[
-                        p1_result["class_id"]
-                    ]
-
-                    p2_gesture = ansToText[
-                        p2_result["class_id"]
-                    ]
-
-                    # 승패 판정
-                    result = checkWinner(
-                        p1_gesture,
-                        p2_gesture
+                    winner = checkWinner(
+                        p1_result,
+                        p2_result
                     )
 
-                    # 결과 색상
-                    if result == "P1 승리":
+                    result_color = getResultColor(winner)
+                    result_start = current_time
+                    game_state = SHOW_RESULT
 
-                        result_bg_color = P1_BG_COLOR
+        elif game_state == SHOW_RESULT:
 
-                    elif result == "P2 승리":
+            display_frame = applyResultOverlay(
+                display_frame,
+                result_color,
+                hands,
+                original_frame
+            )
 
-                        result_bg_color = P2_BG_COLOR
+            elapsed_result = current_time - result_start
 
-                    elif result == "무승부":
+            if elapsed_result >= RESULT_DISPLAY_TIME:
 
-                        result_bg_color = DRAW_BG_COLOR
+                game_state = WAITING
+                result_start = None
+                p1_result = None
+                p2_result = None
+                winner = None
 
-                    else:
+                p1_votes.clear()
+                p2_votes.clear()
 
-                        result_bg_color = (0, 0, 0)
+        elif game_state == SHOW_ERROR:
 
-                    # 결과 텍스트
-                    result_text = (
-                        f"P1: {p1_gesture} | "
-                        f"P2: {p2_gesture} | "
-                        f"{result}"
-                    )
+            elapsed_error = current_time - error_start
 
-                # 판정 당시 손 영역 저장
-                result_hand_boxes = [
-                    tuple(bbox)
-                    for bbox in hand_boxes
-                ]
+            if elapsed_error >= ERROR_DISPLAY_TIME:
 
-                result_detections = []
+                game_state = WAITING
+                error_start = None
+                error_text = ""
 
-                # 결과 표시 시작
-                result_time = time.time()
-
+                p1_votes.clear()
+                p2_votes.clear()
 
         # -------------------------------------------------
-        # 플레이어 3명 이상
+        # 화면 오버레이
         # -------------------------------------------------
+
+        if game_state != SHOW_RESULT:
+
+            if two_hands_detected:
+                display_frame = applyHandOverlay(
+                    display_frame,
+                    hands,
+                    original_frame
+                )
+
+        if game_state == SHOW_RESULT:
+
+            display_frame = drawResultUI(
+                display_frame,
+                p1_result,
+                p2_result,
+                winner
+            )
+
+        elif game_state == SHOW_ERROR:
+
+            display_frame = drawErrorUI(
+                display_frame,
+                error_text
+            )
 
         else:
 
-            recognition_start = None
+            countdown_number = None
 
-            drawText(
-                frame,
-                "Only 2 players allowed",
-                (10, 30),
-                0.6,
-                (0, 0, 255),
-                2
+            if game_state == COUNTDOWN:
+
+                elapsed = current_time - countdown_start
+                remaining = COUNTDOWN_TIME - elapsed
+
+                if remaining > 0:
+                    countdown_number = int(np.ceil(remaining))
+
+            display_frame = drawGameStatus(
+                display_frame,
+                game_state,
+                countdown_number
             )
 
+        display_frame = drawPlayerHeader(
+            display_frame,
+            p1_result if game_state == SHOW_RESULT else None,
+            p2_result if game_state == SHOW_RESULT else None
+        )
 
-    # =====================================================
-    # 4. 손 Bounding Box 표시
-    # =====================================================
+        fps = 1.0 / max(
+            current_time - previous_time,
+            1e-6
+        )
 
-    # 결과 표시 중
-    if result_text != "":
+        previous_time = current_time
 
-        for bbox in result_hand_boxes:
+        display_frame = drawBottomStatus(
+            display_frame,
+            hand_count,
+            fps
+        )
 
-            drawHandBox(
-                frame,
-                bbox,
-                (255, 255, 255)
-            )
+        cv2.imshow("cam", display_frame)
 
-    # 일반 화면
-    else:
+        key = cv2.waitKey(1) & 0xFF
 
-        for i, hand in enumerate(hands):
+        if key == ord("q"):
+            break
 
-            x, y, w, h = hand["bbox"]
+        if key == ord("r"):
 
-            x1 = max(0, x - HAND_OFFSET)
-            y1 = max(0, y - HAND_OFFSET)
+            game_state = WAITING
+            countdown_start = None
+            collect_start = None
+            result_start = None
+            error_start = None
+            last_two_hands_time = None
 
-            x2 = min(
-                frame_width,
-                x + w + HAND_OFFSET
-            )
+            p1_votes.clear()
+            p2_votes.clear()
 
-            y2 = min(
-                frame_height,
-                y + h + HAND_OFFSET
-            )
+            p1_result = None
+            p2_result = None
+            winner = None
+            error_text = ""
 
-            bbox = (x1, y1, x2, y2)
+finally:
 
-            if i == 0:
-
-                label = "P1 (LEFT)"
-                box_color = (0, 255, 255)
-
-            elif i == 1:
-
-                label = "P2 (RIGHT)"
-                box_color = (144, 238, 144)
-
-            else:
-
-                label = f"Hand {i + 1}"
-                box_color = (255, 255, 255)
-
-            drawHandBox(
-                frame,
-                bbox,
-                box_color,
-                label
-            )
-
-
-    # =====================================================
-    # 5. FPS 표시
-    # =====================================================
-
-    curTime = time.time()
-
-    fps = 1 / max(
-        curTime - startTime,
-        1e-6
-    )
-
-    startTime = curTime
-
-    drawText(
-        frame,
-        f"FPS: {fps:.1f}",
-        (20, 50),
-        0.6,
-        (0, 255, 255),
-        2
-    )
-
-
-    # =====================================================
-    # 6. 카메라 화면 출력
-    # =====================================================
-
-    cv2.imshow(
-        "cam",
-        frame
-    )
-
-    key = cv2.waitKey(10)
-
-    if key == ord("q"):
-
-        break
-
-
-# =========================================================
-# 7. 종료
-# =========================================================
-
-cap.release()
-
-cv2.destroyAllWindows()
+    cap.release()
+    cv2.destroyAllWindows()
