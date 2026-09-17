@@ -1,11 +1,3 @@
-# =========================================================
-# RPS LiteRT + Raspberry Pi Camera
-# 수정 사항:
-# 1) AI 추론은 색상 오버레이가 적용되기 전 원본 프레임 사용
-# 2) 모델 입력은 float32 + NCHW (1, 3, 320, 320)
-# 3) Letterbox 좌표를 원본 카메라 좌표로 복원
-# =========================================================
-
 import ai_edge_litert.interpreter as tflite
 import numpy as np
 import time
@@ -121,7 +113,11 @@ p1_result = None
 p2_result = None
 winner = None
 
+p1_score = 0
+p2_score = 0
 
+score_reset_start = None
+score_was_reset = False
 # -----------------------------
 # 4. 손 검출기
 # -----------------------------
@@ -216,11 +212,11 @@ def drawPlayerHeader(frame, p1_gesture=None, p2_gesture=None):
     )
 
     p1_text = "P1  |  " + (
-        p1_gesture.upper() if p1_gesture else "---"
+        p1_gesture.upper() if p1_gesture else str(p1_score)
     )
 
     p2_text = "P2  |  " + (
-        p2_gesture.upper() if p2_gesture else "---"
+        p2_gesture.upper() if p2_gesture else str(p2_score)
     )
 
     drawText(
@@ -649,7 +645,7 @@ def separatePlayers(detections):
 
     return detections[0], detections[1]
 
-
+# 가위바위보 로직
 def checkWinner(p1_gesture, p2_gesture):
 
     if p1_gesture == p2_gesture:
@@ -884,12 +880,32 @@ try:
             two_gestures_detected = (
                 p1 is not None and p2 is not None
             )
-
+            
         # -------------------------------------------------
         # 상태 처리
         # -------------------------------------------------
 
         if game_state == WAITING:
+            
+            # 2명 미인식 시간 확인
+            if not two_hands_detected:
+                # 손 2개 0.2초 동안 없으면 점수 리셋
+                if score_reset_start is None:
+                    score_reset_start = current_time
+                elif (
+                    current_time - score_reset_start >= HAND_LOST_LIMIT
+                    and not score_was_reset
+                ):
+                    # 스코어 리셋 코드 여기다 작성
+                    p1_score = 0
+                    p2_score = 0
+                    print("score reset")
+            
+                    score_was_reset = True
+            else:
+
+                score_reset_start = None
+                score_was_reset = False
 
             if two_hands_detected:
 
@@ -963,6 +979,13 @@ try:
                     )
 
                     result_color = getResultColor(winner)
+                    # 승리 플레이어 점수 증가 
+                    if winner == "P1 Wins":
+                        p1_score +=1
+                        print(p1_score)
+                    elif winner == "P2 Wins":
+                        p2_score += 1
+                        print(p2_score)
                     result_start = current_time
                     game_state = SHOW_RESULT
 
