@@ -7,9 +7,7 @@ from collections import Counter
 from cvzone.HandTrackingModule import HandDetector
 
 
-# -----------------------------
-# 1. 모델 설정
-# -----------------------------
+# 모델 설정 (예제)
 
 modelPath = "best.tflite"
 
@@ -40,9 +38,7 @@ print("Model input shape:", input_shape)
 print("Model size:", IMG_W, IMG_H)
 
 
-# -----------------------------
-# 2. 기본 설정
-# -----------------------------
+# 기본 설정
 
 ansToText = {
     0: "scissors",
@@ -85,9 +81,7 @@ ERROR_DISPLAY_TIME = 1.5
 HAND_LOST_LIMIT = 0.2
 
 
-# -----------------------------
-# 3. 상태
-# -----------------------------
+# 상태 설정 
 
 WAITING = 0
 COUNTDOWN = 1
@@ -118,9 +112,8 @@ p2_score = 0
 
 score_reset_start = None
 score_was_reset = False
-# -----------------------------
-# 4. 손 검출기
-# -----------------------------
+
+# 손 검출기
 
 detector = HandDetector(
     staticMode=False,
@@ -130,9 +123,7 @@ detector = HandDetector(
 )
 
 
-# -----------------------------
-# 5. UI 함수
-# -----------------------------
+# UI 함수
 
 def drawText(frame, text, position, font_scale=0.7,
              color=UI_WHITE, thickness=2,
@@ -301,8 +292,8 @@ def drawResultUI(frame, p1_result, p2_result, winner):
         0.58, UI_WHITE, 2
     )
 
-    p1_text = f"P1: {p1_result.upper()}" if p1_result else "P1: ---"
-    p2_text = f"P2: {p2_result.upper()}" if p2_result else "P2: ---"
+    p1_text = f"P1: {p1_result.upper()}" if p1_result else str(p1_score)
+    p2_text = f"P2: {p2_result.upper()}" if p2_result else str(p2_score)
 
     drawText(
         frame, p1_text, (30, 132),
@@ -395,9 +386,7 @@ def drawBottomStatus(frame, hand_count, fps):
     return frame
 
 
-# -----------------------------
-# 6. 이미지 전처리
-# -----------------------------
+# 이미지 전처리
 
 def letterbox(img, new_shape=(IMG_H, IMG_W),
               color=(114, 114, 114)):
@@ -455,9 +444,7 @@ def preprocess_image(frame):
     return img.astype(np.float32), ratio, pad_x, pad_y
 
 
-# -----------------------------
-# 7. NMS
-# -----------------------------
+# NMS
 
 def apply_nms(boxes, scores):
 
@@ -477,9 +464,7 @@ def apply_nms(boxes, scores):
     return np.array(indices).flatten()
 
 
-# -----------------------------
-# 8. LiteRT 탐지
-# -----------------------------
+# LiteRT 탐지
 
 def processImage(inference_frame, draw_frame=None):
 
@@ -629,13 +614,11 @@ def processImage(inference_frame, draw_frame=None):
     return detections
 
 
-# -----------------------------
-# 9. 플레이어 분리 및 판정
-# -----------------------------
+# 플레이어 분리 및 판정
 
 def separatePlayers(detections):
 
-    if len(detections) != 2:
+    if len(detections) != 2: # 가위바위보 2개 아니면 해당 프레임정보 버림
         return None, None
 
     detections = sorted(
@@ -682,9 +665,7 @@ def getResultColor(winner):
     return DRAW_COLOR
 
 
-# -----------------------------
-# 10. 화면 오버레이
-# -----------------------------
+# 화면 오버레이
 
 def applyHandOverlay(frame, hands, original_frame):
 
@@ -805,9 +786,7 @@ def applyResultOverlay(frame, result_color, hands, original_frame):
     return result_frame
 
 
-# -----------------------------
-# 11. 카메라
-# -----------------------------
+# 카메라
 
 cap = cv2.VideoCapture(0)
 
@@ -827,9 +806,7 @@ cv2.namedWindow("cam", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("cam", 480, 360)
 
 
-# -----------------------------
-# 12. 메인 루프
-# -----------------------------
+# 메인 루프
 
 previous_time = time.time()
 
@@ -860,10 +837,6 @@ try:
         # 표시용 프레임
         display_frame = original_frame.copy()
 
-        # -------------------------------------------------
-        # 중요: 추론은 오버레이 이전의 원본 프레임에서 실행
-        # -------------------------------------------------
-
         detections = []
         p1, p2 = None, None
         two_gestures_detected = False
@@ -881,9 +854,7 @@ try:
                 p1 is not None and p2 is not None
             )
             
-        # -------------------------------------------------
-        # 상태 처리
-        # -------------------------------------------------
+        # 상태 로직
 
         if game_state == WAITING:
             
@@ -1024,9 +995,7 @@ try:
                 p1_votes.clear()
                 p2_votes.clear()
 
-        # -------------------------------------------------
         # 화면 오버레이
-        # -------------------------------------------------
 
         if game_state != SHOW_RESULT:
 
@@ -1093,26 +1062,10 @@ try:
         cv2.imshow("cam", display_frame)
 
         key = cv2.waitKey(1) & 0xFF
+        
 
         if key == ord("q"):
             break
-
-        if key == ord("r"):
-
-            game_state = WAITING
-            countdown_start = None
-            collect_start = None
-            result_start = None
-            error_start = None
-            last_two_hands_time = None
-
-            p1_votes.clear()
-            p2_votes.clear()
-
-            p1_result = None
-            p2_result = None
-            winner = None
-            error_text = ""
 
 finally:
 
